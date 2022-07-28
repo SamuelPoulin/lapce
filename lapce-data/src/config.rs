@@ -148,6 +148,8 @@ pub struct LapceConfig {
     pub modal: bool,
     #[field_names(desc = "Set the color theme of Lapce")]
     pub color_theme: String,
+    #[field_names(desc = "Set the temporary color theme of Lapce")]
+    pub preview_color_theme: String,
 }
 
 #[derive(FieldNames, Debug, Clone, Deserialize, Serialize, Default)]
@@ -641,6 +643,24 @@ impl Config {
         let mut config: Config = settings.try_into()?;
         let available_themes = Self::load_themes();
         if let Some((_, theme)) =
+            available_themes.get(&config.lapce.preview_color_theme.to_lowercase())
+        {
+            if let Ok(theme_settings) =
+                default_settings.clone().with_merged(theme.clone())
+            {
+                if let Ok(mut theme_config) = theme_settings.try_into::<Config>() {
+                    theme_config.resolve_colors(Some(&default_config));
+                    default_config = theme_config;
+                }
+            }
+            config = Self::merge_settings(
+                default_settings,
+                workspace,
+                Some(theme.clone()),
+            )
+            .try_into()?;
+        }
+        else if let Some((_, theme)) =
             available_themes.get(&config.lapce.color_theme.to_lowercase())
         {
             if let Ok(theme_settings) =
@@ -937,17 +957,20 @@ impl Config {
         self.lapce.color_theme = theme.to_string();
 
         if !preview
-            && Config::update_file(
+        {
+Config::update_file(
                 "lapce",
                 "color-theme",
                 toml::Value::String(theme.to_string()),
-            )
-            .is_none()
-        {
-            return false;
+            );
+
+            Config::reset_setting("lapce", "preview-color-theme");
+        }
+        else {
+            Config::update_file("lapce", "preview-color-theme", toml::Value::String(theme.to_string()));
         }
 
-        true
+            false
     }
 
     /// Get the color by the name from the current theme if it exists

@@ -1,6 +1,7 @@
 [lapce]
 modal = false
 color-theme = "Lapce Dark"
+preview-color-theme = ""
 icon-theme = ""
 
 [editor]

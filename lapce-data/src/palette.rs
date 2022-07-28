@@ -401,6 +401,8 @@ impl KeyPressFocus for PaletteViewData {
         match &command.kind {
             CommandKind::Focus(cmd) => match cmd {
                 FocusCommand::ModalClose => {
+                    Config::reset_setting("lapce", "preview-color-theme");
+                    
                     self.cancel(ctx);
                 }
                 FocusCommand::ListNext => {
