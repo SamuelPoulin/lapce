@@ -76,11 +76,12 @@ impl Dispatcher {
         };
         *dispatcher.file_watcher.lock() = Some(FileWatcher::new(dispatcher.clone()));
         dispatcher.lsp.lock().dispatcher = Some(dispatcher.clone());
-
         let local_dispatcher = dispatcher.clone();
         thread::spawn(move || {
             local_dispatcher.plugins.lock().reload();
             let plugins = { local_dispatcher.plugins.lock().items.clone() };
+            let delay = std::time::Duration::from_millis(50);
+            std::thread::sleep(delay);
             local_dispatcher.send_notification(
                 "installed_plugins",
                 json!({
@@ -92,7 +93,6 @@ impl Dispatcher {
                 .lock()
                 .start_all(local_dispatcher.clone());
         });
-
         let local_dispatcher = dispatcher.clone();
         thread::spawn(move || {
             if let Some(path) = BaseDirs::new().map(|d| PathBuf::from(d.home_dir()))
@@ -368,6 +368,71 @@ impl Dispatcher {
                         "installed_plugins",
                         json!({
                             "plugins": plugins,
+                        }),
+                    );
+                });
+            }
+            DisablePlugin { plugin } => {
+                let catalog = self.plugins.clone();
+                let dispatcher = self.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = catalog
+                        .lock()
+                        .disable_plugin(dispatcher.clone(), plugin.clone())
+                    {
+                        eprintln!("disable plugin error {e}");
+                    }
+                    let plugins = { dispatcher.plugins.lock().disabled.clone() };
+                    dispatcher.send_notification(
+                        "disabled_plugins",
+                        json!({
+                            "plugins": plugins,
+                        }),
+                    )
+                });
+            }
+            EnablePlugin { plugin } => {
+                let catalog = self.plugins.clone();
+                let dispatcher = self.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = catalog
+                        .lock()
+                        .enable_plugin(dispatcher.clone(), plugin.clone())
+                    {
+                        eprintln!("enable plugin error {e}");
+                    }
+                    let plugins = { dispatcher.plugins.lock().disabled.clone() };
+                    dispatcher.send_notification(
+                        "disabled_plugins",
+                        json!({
+                            "plugins": plugins,
+                        }),
+                    )
+                });
+            }
+            RemovePlugin { plugin } => {
+                let catalog = self.plugins.clone();
+                let dispatcher = self.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = catalog
+                        .lock()
+                        .remove_plugin(dispatcher.clone(), plugin.clone())
+                    {
+                        eprintln!("remove plugin error {e}");
+                    }
+                    let plugins = { dispatcher.plugins.lock().items.clone() };
+                    dispatcher.send_notification(
+                        "installed_plugins",
+                        json!({
+                            "plugins": plugins,
+                        }),
+                    );
+                    let disabled_plugins =
+                        { dispatcher.plugins.lock().disabled.clone() };
+                    dispatcher.send_notification(
+                        "disabled_plugins",
+                        json!({
+                            "plugins": disabled_plugins,
                         }),
                     );
                 });

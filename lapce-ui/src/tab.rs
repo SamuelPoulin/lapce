@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use druid::{
     kurbo::Line,
@@ -17,8 +17,8 @@ use lapce_core::{
 use lapce_data::{
     command::{
         CommandKind, LapceCommand, LapceUICommand, LapceWorkbenchCommand,
-        LAPCE_COMMAND, LAPCE_OPEN_FILE, LAPCE_OPEN_FOLDER, LAPCE_SAVE_FILE_AS,
-        LAPCE_UI_COMMAND,
+        PluginLoadingStatus, LAPCE_COMMAND, LAPCE_OPEN_FILE, LAPCE_OPEN_FOLDER,
+        LAPCE_SAVE_FILE_AS, LAPCE_UI_COMMAND,
     },
     completion::CompletionStatus,
     config::{Config, LapceTheme},
@@ -27,7 +27,7 @@ use lapce_data::{
         LapceWorkspace, LapceWorkspaceType, WorkProgress,
     },
     document::{BufferContent, LocalBufferKind},
-    editor::EditorLocation,
+    editor::{EditorLocation, EditorPosition},
     hover::HoverStatus,
     keypress::{DefaultKeyPressHandler, KeyPressData},
     menu::MenuKind,
@@ -275,15 +275,15 @@ impl LapceTab {
                             .is_container_shown(&PanelContainerPosition::Bottom)
                         {
                             ctx.submit_command(Command::new(
-                            LAPCE_COMMAND,
-                            LapceCommand {
-                                kind: CommandKind::Workbench(
-                                    LapceWorkbenchCommand::TogglePanelBottomVisual,
-                                ),
-                                data: None,
-                            },
-                            Target::Widget(data.id),
-                        ));
+                                LAPCE_COMMAND,
+                                LapceCommand {
+                                    kind: CommandKind::Workbench(
+                                        LapceWorkbenchCommand::TogglePanelBottomVisual,
+                                    ),
+                                    data: None,
+                                },
+                                Target::Widget(data.id),
+                            ));
                         }
                     } else if !data
                         .panel
@@ -425,7 +425,7 @@ impl LapceTab {
     }
 
     fn handle_panel_drop(&mut self, _ctx: &mut EventCtx, data: &mut LapceTabData) {
-        if let Some((_, DragContent::Panel(kind, _))) = data.drag.as_ref() {
+        if let Some((_, _, DragContent::Panel(kind, _))) = data.drag.as_ref() {
             let rects = self.panel_rects();
             for (p, rect) in rects.iter() {
                 if rect.contains(self.mouse_pos) {
@@ -465,7 +465,7 @@ impl LapceTab {
     }
 
     fn paint_drag_on_panel(&self, ctx: &mut PaintCtx, data: &LapceTabData) {
-        if let Some((_, DragContent::Panel(_, _))) = data.drag.as_ref() {
+        if let Some((_, _, DragContent::Panel(_, _))) = data.drag.as_ref() {
             let rects = self.panel_rects();
             for (_, rect) in rects.iter() {
                 if rect.contains(self.mouse_pos) {
@@ -484,7 +484,13 @@ impl LapceTab {
     }
 
     fn paint_drag(&self, ctx: &mut PaintCtx, data: &LapceTabData) {
-        if let Some((offset, drag_content)) = data.drag.as_ref() {
+        if let Some((offset, start, drag_content)) = data.drag.as_ref() {
+            if (self.mouse_pos.x - start.x).abs() < 5.
+                && (self.mouse_pos.y - start.y).abs() < 5.
+            {
+                // debounce accidental drags
+                return;
+            }
             match drag_content {
                 DragContent::EditorTab(_, _, _, tab_rect) => {
                     let rect = tab_rect.rect.with_origin(self.mouse_pos - *offset);
@@ -731,49 +737,46 @@ impl LapceTab {
                         path,
                         content,
                         locations,
+                        edits,
                     } => {
-                        let doc = data.main_split.open_docs.get_mut(path).unwrap();
-                        let doc = Arc::make_mut(doc);
-                        doc.init_content(content.to_owned());
-                        if let BufferContent::File(path) = doc.content() {
-                            if let Some(d) = data.main_split.diagnostics.get(path) {
-                                doc.set_diagnostics(d);
-                            }
-                        }
-
-                        for (view_id, location) in locations {
-                            data.main_split.go_to_location(
-                                ctx,
-                                Some(*view_id),
-                                location.clone(),
-                                &data.config,
-                            );
-                        }
-                        ctx.set_handled();
+                        init_buffer_content(
+                            ctx,
+                            data,
+                            path,
+                            content,
+                            locations,
+                            edits.as_ref(),
+                        );
                     }
                     LapceUICommand::InitBufferContentLsp {
                         path,
                         content,
                         locations,
+                        edits,
                     } => {
-                        let doc = data.main_split.open_docs.get_mut(path).unwrap();
-                        let doc = Arc::make_mut(doc);
-                        doc.init_content(content.to_owned());
-                        if let BufferContent::File(path) = doc.content() {
-                            if let Some(d) = data.main_split.diagnostics.get(path) {
-                                doc.set_diagnostics(d);
-                            }
-                        }
-
-                        for (view_id, location) in locations {
-                            data.main_split.go_to_location(
-                                ctx,
-                                Some(*view_id),
-                                location.clone(),
-                                &data.config,
-                            );
-                        }
-                        ctx.set_handled();
+                        init_buffer_content(
+                            ctx,
+                            data,
+                            path,
+                            content,
+                            locations,
+                            edits.as_ref(),
+                        );
+                    }
+                    LapceUICommand::InitBufferContentLineCol {
+                        path,
+                        content,
+                        locations,
+                        edits,
+                    } => {
+                        init_buffer_content(
+                            ctx,
+                            data,
+                            path,
+                            content,
+                            locations,
+                            edits.as_ref(),
+                        );
                     }
                     LapceUICommand::InitPaletteInput(pattern) => {
                         let doc = data
@@ -923,39 +926,56 @@ impl LapceTab {
                     LapceUICommand::UpdateUninstalledPluginDescriptions(plugins) => {
                         data.uninstalled_plugins_desc = Arc::new(plugins.to_owned());
                     }
-                    LapceUICommand::DeleteUninstalledPluginDescriptions(plugins) => {
-                        let new_installed_plugin = plugins
-                            .iter()
-                            .filter(|p| {
-                                if let Some(ref plugins) =
-                                    *data.uninstalled_plugins_desc
-                                {
-                                    plugins
-                                        .iter()
-                                        .find(|up| up.name == p.name)
-                                        .ok_or(())
-                                        .is_ok()
-                                } else {
-                                    false
-                                }
-                            })
-                            .collect::<Vec<&PluginDescription>>();
-                        if !new_installed_plugin.is_empty() {
-                            let plugin_desc =
-                                (*data.uninstalled_plugins_desc).clone().map(|pd| {
-                                    pd.iter()
-                                        .filter_map(|p| {
-                                            if p.name != new_installed_plugin[0].name
-                                            {
-                                                Some(p.to_owned())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect::<Vec<PluginDescription>>()
+                    LapceUICommand::UpdateDisabledPlugins(plugins) => {
+                        data.disabled_plugins = Arc::new(plugins.to_owned());
+                    }
+                    LapceUICommand::UpdatePluginInstallationChange(plugins) => {
+                        if let PluginLoadingStatus::Ok(ref installed_plugins_desc) =
+                            *data.installed_plugins_desc
+                        {
+                            if installed_plugins_desc.len() != plugins.len() {
+                                let local_plugins = plugins.clone();
+                                let handle = std::thread::spawn(move || {
+                                    if let Ok(fetched_plugins) =
+                                        LapceData::load_plugin_descriptions()
+                                    {
+                                        let (installed, uninstalled): (
+                                            Vec<PluginDescription>,
+                                            Vec<PluginDescription>,
+                                        ) = fetched_plugins.into_iter().partition(
+                                            |p| {
+                                                local_plugins
+                                                    .iter()
+                                                    .find(|(_, ip)| {
+                                                        ip.name == p.name
+                                                    })
+                                                    .ok_or(())
+                                                    .is_ok()
+                                            },
+                                        );
+                                        return Ok((installed, uninstalled));
+                                    }
+                                    Err(())
                                 });
-                            data.uninstalled_plugins_desc = Arc::new(plugin_desc);
+                                let fetch_result = handle.join().unwrap_or(Err(()));
+                                if let Ok((installed, uninstalled)) = fetch_result {
+                                    data.installed_plugins_desc =
+                                        Arc::new(PluginLoadingStatus::Ok(installed));
+                                    data.uninstalled_plugins_desc = Arc::new(
+                                        PluginLoadingStatus::Ok(uninstalled),
+                                    );
+                                }
+                            }
                         }
+                    }
+                    LapceUICommand::DisablePlugin(plugin) => {
+                        data.proxy.disable_plugin(plugin);
+                    }
+                    LapceUICommand::EnablePlugin(plugin) => {
+                        data.proxy.enable_plugin(plugin);
+                    }
+                    LapceUICommand::RemovePlugin(plugin) => {
+                        data.proxy.remove_plugin(plugin);
                     }
                     LapceUICommand::UpdateDiffInfo(diff) => {
                         let source_control = Arc::make_mut(&mut data.source_control);
@@ -1248,18 +1268,23 @@ impl LapceTab {
                         );
                         ctx.set_handled();
                     }
-                    LapceUICommand::JumpToLineColumnPath {
-                        editor_view_id,
-                        path,
-                        line,
-                        column,
-                    } => {
-                        data.main_split.jump_to_line_column_path(
+                    LapceUICommand::JumpToLineLocation(editor_view_id, location) => {
+                        data.main_split.jump_to_location(
                             ctx,
                             *editor_view_id,
-                            path.clone(),
-                            *line,
-                            *column,
+                            location.clone(),
+                            &data.config,
+                        );
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::JumpToLineColLocation(
+                        editor_view_id,
+                        location,
+                    ) => {
+                        data.main_split.jump_to_location(
+                            ctx,
+                            *editor_view_id,
+                            location.clone(),
                             &data.config,
                         );
                         ctx.set_handled();
@@ -2293,4 +2318,36 @@ impl Widget<LapceTabData> for LapceTabHeader {
             );
         }
     }
+}
+
+fn init_buffer_content<P: EditorPosition + Clone + Send + 'static>(
+    ctx: &mut EventCtx,
+    data: &mut LapceTabData,
+    path: &Path,
+    content: &Rope,
+    locations: &[(WidgetId, EditorLocation<P>)],
+    edits: Option<&Rope>,
+) {
+    let doc = data.main_split.open_docs.get_mut(path).unwrap();
+    let doc = Arc::make_mut(doc);
+    doc.init_content(content.to_owned());
+
+    if let Some(rope) = edits {
+        doc.reload(rope.clone(), false);
+    }
+    if let BufferContent::File(path) = doc.content() {
+        if let Some(d) = data.main_split.diagnostics.get(path) {
+            doc.set_diagnostics(d);
+        }
+    }
+
+    for (view_id, location) in locations {
+        data.main_split.go_to_location(
+            ctx,
+            Some(*view_id),
+            location.clone(),
+            &data.config,
+        );
+    }
+    ctx.set_handled();
 }

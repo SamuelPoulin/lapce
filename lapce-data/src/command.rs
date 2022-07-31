@@ -25,6 +25,7 @@ use xi_rope::{spans::Spans, Rope};
 use crate::alert::AlertContentData;
 use crate::data::LapceWorkspace;
 use crate::document::BufferContent;
+use crate::editor::{Line, LineCol};
 use crate::menu::MenuKind;
 use crate::rich_text::RichText;
 use crate::{
@@ -396,6 +397,17 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "previous_editor_tab")]
     #[strum(message = "Previous editor tab")]
     PreviousEditorTab,
+
+    #[strum(serialize = "toggle_inlay_hints")]
+    #[strum(message = "Toggle Inlay Hints")]
+    ToggleInlayHints,
+}
+
+#[derive(Debug, Clone)]
+pub enum PluginLoadingStatus {
+    Loading,
+    Failed,
+    Ok(Vec<PluginDescription>),
 }
 
 #[derive(Debug)]
@@ -419,12 +431,26 @@ pub enum LapceUICommand {
         path: PathBuf,
         content: Rope,
         locations: Vec<(WidgetId, EditorLocation)>,
+        edits: Option<Rope>,
+    },
+    InitBufferContentLine {
+        path: PathBuf,
+        content: Rope,
+        locations: Vec<(WidgetId, EditorLocation<Line>)>,
+        edits: Option<Rope>,
+    },
+    InitBufferContentLineCol {
+        path: PathBuf,
+        content: Rope,
+        locations: Vec<(WidgetId, EditorLocation<LineCol>)>,
+        edits: Option<Rope>,
     },
     /// Init buffer content but using lsp positions instead
     InitBufferContentLsp {
         path: PathBuf,
         content: Rope,
         locations: Vec<(WidgetId, EditorLocation<Position>)>,
+        edits: Option<Rope>,
     },
     OpenFileChanged {
         path: PathBuf,
@@ -495,9 +521,13 @@ pub enum LapceUICommand {
     UpdateExplorerItems(PathBuf, HashMap<PathBuf, FileNodeItem>, bool),
     UpdateInstalledPlugins(HashMap<String, PluginDescription>),
     UpdatePluginDescriptions(Vec<PluginDescription>),
-    UpdateInstalledPluginDescriptions(Option<Vec<PluginDescription>>),
-    UpdateUninstalledPluginDescriptions(Option<Vec<PluginDescription>>),
-    DeleteUninstalledPluginDescriptions(Vec<PluginDescription>),
+    UpdateInstalledPluginDescriptions(PluginLoadingStatus),
+    UpdateUninstalledPluginDescriptions(PluginLoadingStatus),
+    UpdatePluginInstallationChange(HashMap<String, PluginDescription>),
+    UpdateDisabledPlugins(HashMap<String, PluginDescription>),
+    DisablePlugin(PluginDescription),
+    EnablePlugin(PluginDescription),
+    RemovePlugin(PluginDescription),
     RequestLayout,
     RequestPaint,
     ResetFade,
@@ -581,12 +611,8 @@ pub enum LapceUICommand {
     JumpToLine(Option<WidgetId>, usize),
     JumpToLocation(Option<WidgetId>, EditorLocation),
     JumpToLspLocation(Option<WidgetId>, EditorLocation<Position>),
-    JumpToLineColumnPath {
-        editor_view_id: Option<WidgetId>,
-        path: PathBuf,
-        line: usize,
-        column: usize,
-    },
+    JumpToLineLocation(Option<WidgetId>, EditorLocation<Line>),
+    JumpToLineColLocation(Option<WidgetId>, EditorLocation<LineCol>),
     TerminalJumpToLine(i32),
     GoToLocationNew(WidgetId, EditorLocation),
     GotoDefinition {
