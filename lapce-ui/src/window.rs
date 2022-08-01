@@ -327,15 +327,21 @@ impl Widget<LapceWindowData> for LapceWindow {
                         self.new_tab(ctx, data, workspace.clone(), true);
                         return;
                     }
-                    LapceUICommand::SetTheme(theme, preview) => {
+                    LapceUICommand::PreviewTheme(theme) => {
                         let config = Arc::make_mut(&mut data.config);
-                        config.set_theme(theme, *preview);
-                        if *preview {
-                            for (_, tab) in data.tabs.iter_mut() {
-                                Arc::make_mut(&mut tab.config)
-                                    .set_theme(theme, true);
-                            }
+                        config.preview_theme(theme);
+                        
+                        for (_, tab) in data.tabs.iter_mut() {
+                            Arc::make_mut(&mut tab.config)
+                            .preview_theme(theme);
                         }
+                        
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::SetTheme(theme) => {
+                        let config = Arc::make_mut(&mut data.config);
+                        config.set_theme(theme);
+
                         ctx.set_handled();
                     }
                     LapceUICommand::NewTab => {

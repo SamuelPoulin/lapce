@@ -951,26 +951,37 @@ impl Config {
             .unwrap_or(0);
     }
 
-    pub fn set_theme(&mut self, theme: &str, preview: bool) -> bool {
+    pub fn preview_theme(&mut self, theme: &str) -> bool {
         self.update_id();
-
+        
         self.lapce.color_theme = theme.to_string();
-
-        if !preview
-        {
-Config::update_file(
-                "lapce",
-                "color-theme",
-                toml::Value::String(theme.to_string()),
-            );
-
-            Config::reset_setting("lapce", "preview-color-theme");
+        
+        if Config::update_file(
+            "lapce",
+            "preview-color-theme",
+            toml::Value::String(theme.to_string()),
+        ).is_none() {
+            return false  
         }
-        else {
-            Config::update_file("lapce", "preview-color-theme", toml::Value::String(theme.to_string()));
-        }
+        
+        true
+        
+    }
 
-            false
+    pub fn set_theme(&mut self, theme: &str) -> bool {
+        self.update_id();
+        
+        self.lapce.color_theme = theme.to_string();
+        
+        if Config::update_file(
+            "lapce",
+            "color-theme",
+            toml::Value::String(theme.to_string()),
+        ).is_none() {
+            return false  
+        }
+        
+        true
     }
 
     /// Get the color by the name from the current theme if it exists

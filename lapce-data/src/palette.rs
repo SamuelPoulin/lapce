@@ -221,7 +221,12 @@ impl PaletteItemContent {
             PaletteItemContent::Theme(theme) => {
                 ctx.submit_command(Command::new(
                     LAPCE_UI_COMMAND,
-                    LapceUICommand::SetTheme(theme.to_string(), preview),
+                    LapceUICommand::PreviewTheme(theme.to_string()),
+                    Target::Auto,
+                ));
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::SetTheme(theme.to_string()),
                     Target::Auto,
                 ));
             }
