@@ -3,6 +3,7 @@ modal = false
 color-theme = "Lapce Dark"
 preview-color-theme = ""
 icon-theme = ""
+custom-titlebar = true
 
 [editor]
 font-family = "Cascadia Code"
@@ -39,7 +40,7 @@ status-height = 25
 tab-min-width = 100
 scroll-width = 10
 drop-shadow-width = 0
-custom-titlebar = false
+preview-editor-width = 0
 hover-font-family = ""
 hover-font-size = 0
 

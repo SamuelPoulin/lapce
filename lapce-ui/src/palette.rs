@@ -14,7 +14,7 @@ use druid::{FontWeight, Modifiers};
 use lapce_data::command::LAPCE_COMMAND;
 use lapce_data::config::Config;
 use lapce_data::data::LapceWorkspaceType;
-use lapce_data::palette::PaletteItemContent;
+use lapce_data::palette::{PaletteItemContent, MAX_PALETTE_ITEMS};
 use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
@@ -338,11 +338,11 @@ impl Widget<LapceTabData> for PaletteContainer {
         let max_height = bc.max().height;
 
         let bc = BoxConstraints::tight(Size::new(width, bc.max().height));
+
         let input_size = self.input.layout(ctx, &bc, data, env);
         self.input.set_origin(ctx, data, env, Point::ZERO);
 
-        let max_items = 15;
-        let height = max_items.min(data.palette.len());
+        let height = MAX_PALETTE_ITEMS.min(data.palette.len());
         let height = self.line_height * height as f64;
         let bc = BoxConstraints::tight(Size::new(width, height));
         let content_size = self.content.layout(ctx, &bc, data, env);
@@ -355,7 +355,7 @@ impl Widget<LapceTabData> for PaletteContainer {
 
         let max_preview_height = max_height
             - input_size.height
-            - max_items as f64 * self.line_height
+            - MAX_PALETTE_ITEMS as f64 * self.line_height
             - 5.0;
         let preview_height = if data.palette.palette_type.has_preview() {
             if content_height > 0.0 {
@@ -366,14 +366,24 @@ impl Widget<LapceTabData> for PaletteContainer {
         } else {
             0.0
         };
-        let bc = BoxConstraints::tight(Size::new(width, max_preview_height));
-        let _preview_size = self.preview.layout(ctx, &bc, data, env);
+        let bc = BoxConstraints::tight(Size::new(
+            f64::max(width, data.config.ui.preview_editor_width() as f64),
+            max_preview_height,
+        ));
+        let preview_size = self.preview.layout(ctx, &bc, data, env);
+        let preview_width = if preview_size.width > width {
+            width - preview_size.width as f64
+        } else {
+            0.00
+        };
         self.preview.set_origin(
             ctx,
             data,
             env,
-            Point::new(0.0, input_size.height + content_height),
+            Point::new(preview_width / 2.0, input_size.height + content_height),
         );
+
+        ctx.set_paint_insets(4000.0);
 
         let self_size =
             Size::new(width, input_size.height + content_height + preview_height);

@@ -1,19 +1,16 @@
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, path::PathBuf, sync::Arc};
 
 use anyhow::Error;
-use druid::{ExtEventSink, Size, Target, WidgetId};
+use druid::{Size, WidgetId};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use itertools::Itertools;
 use lapce_core::movement::Movement;
-use lapce_rpc::buffer::BufferId;
+use lapce_rpc::{buffer::BufferId, plugin::PluginId};
 use lsp_types::{CompletionItem, CompletionResponse, Position};
 use regex::Regex;
 use std::str::FromStr;
 
-use crate::{
-    command::{LapceUICommand, LAPCE_UI_COMMAND},
-    proxy::LapceProxy,
-};
+use crate::proxy::LapceProxy;
 
 #[derive(Debug)]
 pub struct Snippet {
@@ -111,7 +108,7 @@ impl Snippet {
                     .map(|e| format!("\\{}", e))
                     .any(|x| x == *esc)
                 {
-                    ele = ele + &s[1..2].to_string();
+                    ele += &s[1..2];
                     end += 2;
                     s = &s[2..];
                     continue;
@@ -120,7 +117,7 @@ impl Snippet {
             if escs.contains(&&s[0..1]) {
                 break;
             }
-            ele = ele + &s[0..1].to_string();
+            ele += &s[0..1];
             end += 1;
             s = &s[1..];
         }
@@ -227,7 +224,7 @@ impl Display for SnippetElement {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CompletionStatus {
     Inactive,
     Started,
@@ -284,12 +281,30 @@ impl CompletionData {
         self.len() == 0
     }
 
+    /// We need the line height so that we can get the number displayed as a number, since
+    /// we just render as many fit inside the `size` defined for completion.
+    fn entry_count(&self, editor_line_height: usize) -> usize {
+        ((self.size.height / editor_line_height as f64).ceil() as usize)
+            .saturating_sub(1)
+    }
+
     pub fn next(&mut self) {
         self.index = Movement::Down.update_index(self.index, self.len(), 1, true);
     }
 
+    pub fn next_page(&mut self, editor_line_height: usize) {
+        let count = self.entry_count(editor_line_height);
+        self.index =
+            Movement::Down.update_index(self.index, self.len(), count, false);
+    }
+
     pub fn previous(&mut self) {
         self.index = Movement::Up.update_index(self.index, self.len(), 1, true);
+    }
+
+    pub fn previous_page(&mut self, editor_line_height: usize) {
+        let count = self.entry_count(editor_line_height);
+        self.index = Movement::Up.update_index(self.index, self.len(), count, false);
     }
 
     pub fn current_items(&self) -> &Arc<Vec<ScoredCompletionItem>> {
@@ -307,8 +322,8 @@ impl CompletionData {
             .unwrap_or_else(move || self.input_items.get("").unwrap_or(&self.empty))
     }
 
-    pub fn current_item(&self) -> &CompletionItem {
-        &self.current_items()[self.index].item
+    pub fn current_item(&self) -> &ScoredCompletionItem {
+        &self.current_items()[self.index]
     }
 
     pub fn current(&self) -> &str {
@@ -320,26 +335,13 @@ impl CompletionData {
         &self,
         proxy: Arc<LapceProxy>,
         request_id: usize,
-        buffer_id: BufferId,
+        path: PathBuf,
         input: String,
         position: Position,
-        completion_widget_id: WidgetId,
-        event_sink: ExtEventSink,
     ) {
-        proxy.get_completion(
-            request_id,
-            buffer_id,
-            position,
-            Box::new(move |result| {
-                if let Ok(resp) = result {
-                    let _ = event_sink.submit_command(
-                        LAPCE_UI_COMMAND,
-                        LapceUICommand::UpdateCompletion(request_id, input, resp),
-                        Target::Widget(completion_widget_id),
-                    );
-                }
-            }),
-        );
+        proxy
+            .proxy_rpc
+            .completion(request_id, path, input, position);
     }
 
     pub fn cancel(&mut self) {
@@ -366,6 +368,7 @@ impl CompletionData {
         request_id: usize,
         input: String,
         resp: CompletionResponse,
+        plugin_id: PluginId,
     ) {
         if self.status == CompletionStatus::Inactive || self.request_id != request_id
         {
@@ -380,6 +383,7 @@ impl CompletionData {
             .iter()
             .map(|i| ScoredCompletionItem {
                 item: i.to_owned(),
+                plugin_id,
                 score: 0,
                 label_score: 0,
                 indices: Vec::new(),
@@ -388,6 +392,10 @@ impl CompletionData {
 
         self.input_items.insert(input, Arc::new(items));
         self.filter_items();
+
+        if self.index >= self.len() {
+            self.index = 0;
+        }
     }
 
     pub fn filter_items(&mut self) {
@@ -458,7 +466,7 @@ impl Default for Completion {
 #[derive(Clone)]
 pub struct ScoredCompletionItem {
     pub item: CompletionItem,
-
+    pub plugin_id: PluginId,
     pub score: i64,
     pub label_score: i64,
     pub indices: Vec<usize>,

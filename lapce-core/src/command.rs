@@ -8,6 +8,7 @@ use crate::movement::{LinePosition, Movement};
     EnumIter,
     Clone,
     PartialEq,
+    Eq,
     Debug,
     EnumMessage,
     IntoStaticStr,
@@ -91,6 +92,7 @@ pub enum EditCommand {
     EnumIter,
     Clone,
     PartialEq,
+    Eq,
     Debug,
     EnumMessage,
     IntoStaticStr,
@@ -177,6 +179,7 @@ impl MoveCommand {
     EnumIter,
     Clone,
     PartialEq,
+    Eq,
     Debug,
     EnumMessage,
     IntoStaticStr,
@@ -214,8 +217,12 @@ pub enum FocusCommand {
     ListSelect,
     #[strum(serialize = "list.next")]
     ListNext,
+    #[strum(serialize = "list.next_page")]
+    ListNextPage,
     #[strum(serialize = "list.previous")]
     ListPrevious,
+    #[strum(serialize = "list.previous_page")]
+    ListPreviousPage,
     #[strum(serialize = "list.expand")]
     ListExpand,
     #[strum(serialize = "jump_to_next_snippet_placeholder")]
@@ -294,6 +301,7 @@ pub enum FocusCommand {
     EnumIter,
     Clone,
     PartialEq,
+    Eq,
     Debug,
     EnumMessage,
     IntoStaticStr,
@@ -315,6 +323,7 @@ pub enum MotionModeCommand {
     EnumIter,
     Clone,
     PartialEq,
+    Eq,
     Debug,
     EnumMessage,
     IntoStaticStr,

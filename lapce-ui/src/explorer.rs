@@ -25,7 +25,7 @@ use lapce_rpc::file::FileNodeItem;
 
 use crate::editor::view::LapceEditorView;
 use crate::{
-    panel::{LapcePanel, PanelHeaderKind},
+    panel::{LapcePanel, PanelHeaderKind, PanelSizing},
     scroll::LapceScroll,
     svg::{file_svg, get_svg},
 };
@@ -331,7 +331,7 @@ impl FileExplorer {
                 split_id,
                 PanelHeaderKind::None,
                 Self::new(data).boxed(),
-                None,
+                PanelSizing::Flex(false),
             )],
         )
     }
@@ -424,6 +424,10 @@ impl Widget<LapceTabData> for FileExplorerFileList {
                     let file_explorer = Arc::make_mut(&mut data.file_explorer);
                     file_explorer.active_selected = path.clone();
                     ctx.request_paint();
+                }
+
+                if let LapceUICommand::FileExplorerRefresh = command {
+                    data.file_explorer.reload();
                 }
             }
             _ => {}
@@ -646,6 +650,15 @@ impl Widget<LapceTabData> for FileExplorerFileList {
                             );
                             menu = menu.entry(item);
                         }
+
+                        menu = menu.separator();
+                        let item =
+                            druid::MenuItem::new("Refresh").command(Command::new(
+                                LAPCE_UI_COMMAND,
+                                LapceUICommand::FileExplorerRefresh,
+                                Target::Auto,
+                            ));
+                        menu = menu.entry(item);
 
                         ctx.show_context_menu::<LapceData>(
                             menu,

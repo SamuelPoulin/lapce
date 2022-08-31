@@ -1,16 +1,19 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
-use druid::{FileInfo, Point, Rect, Selector, SingleUse, Size, WidgetId, WindowId};
+use druid::{
+    EventCtx, FileInfo, Point, Rect, Selector, SingleUse, Size, WidgetId, WindowId,
+};
 use indexmap::IndexMap;
 use lapce_core::buffer::DiffLines;
 use lapce_core::command::{
     EditCommand, FocusCommand, MotionModeCommand, MoveCommand, MultiSelectionCommand,
 };
 use lapce_core::syntax::Syntax;
+use lapce_rpc::plugin::{PluginId, VoltInfo, VoltMetadata};
 use lapce_rpc::{
-    buffer::BufferId, file::FileNodeItem, plugin::PluginDescription,
-    source_control::DiffInfo, style::Style, terminal::TermId,
+    buffer::BufferId, file::FileNodeItem, source_control::DiffInfo, style::Style,
+    terminal::TermId,
 };
 use lsp_types::{
     CodeActionOrCommand, CodeActionResponse, CompletionItem, CompletionResponse,
@@ -23,11 +26,12 @@ use strum_macros::{Display, EnumIter, EnumMessage, EnumString, IntoStaticStr};
 use xi_rope::{spans::Spans, Rope};
 
 use crate::alert::AlertContentData;
-use crate::data::LapceWorkspace;
+use crate::data::{LapceMainSplitData, LapceTabData, LapceWorkspace};
 use crate::document::BufferContent;
-use crate::editor::{Line, LineCol};
+use crate::editor::{EditorPosition, Line, LineCol};
 use crate::menu::MenuKind;
 use crate::rich_text::RichText;
+use crate::update::ReleaseInfo;
 use crate::{
     data::{EditorTabChild, SplitContent},
     editor::EditorLocation,
@@ -109,7 +113,7 @@ impl LapceCommand {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum CommandExecuted {
     Yes,
     No,
@@ -175,6 +179,7 @@ pub fn lapce_internal_commands() -> IndexMap<String, LapceCommand> {
     EnumIter,
     Clone,
     PartialEq,
+    Eq,
     Debug,
     EnumMessage,
     IntoStaticStr,
@@ -212,6 +217,10 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Open Settings File")]
     OpenSettingsFile,
 
+    #[strum(serialize = "open_settings_directory")]
+    #[strum(message = "Open Settings Directory")]
+    OpenSettingsDirectory,
+
     #[strum(serialize = "open_keyboard_shortcuts")]
     #[strum(message = "Open Keyboard Shortcuts")]
     OpenKeyboardShortcuts,
@@ -223,6 +232,22 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "open_log_file")]
     #[strum(message = "Open Log File")]
     OpenLogFile,
+
+    #[strum(serialize = "open_logs_directory")]
+    #[strum(message = "Open Logs Directory")]
+    OpenLogsDirectory,
+
+    #[strum(serialize = "open_proxy_directory")]
+    #[strum(message = "Open Proxy Directory")]
+    OpenProxyDirectory,
+
+    #[strum(serialize = "open_themes_directory")]
+    #[strum(message = "Open Themes Directory")]
+    OpenThemesDirectory,
+
+    #[strum(serialize = "open_plugins_directory")]
+    #[strum(message = "Open Plugins Directory")]
+    OpenPluginsDirectory,
 
     #[strum(serialize = "close_window_tab")]
     #[strum(message = "Close Current Window Tab")]
@@ -401,13 +426,13 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "toggle_inlay_hints")]
     #[strum(message = "Toggle Inlay Hints")]
     ToggleInlayHints,
-}
 
-#[derive(Debug, Clone)]
-pub enum PluginLoadingStatus {
-    Loading,
-    Failed,
-    Ok(Vec<PluginDescription>),
+    #[strum(serialize = "restart_to_update")]
+    RestartToUpdate,
+
+    #[strum(serialize = "show_about")]
+    #[strum(message = "About")]
+    ShowAbout,
 }
 
 #[derive(Debug)]
@@ -427,31 +452,14 @@ pub enum LapceUICommand {
     InitChildren,
     InitTerminalPanel(bool),
     ReloadConfig,
-    InitBufferContent {
-        path: PathBuf,
-        content: Rope,
-        locations: Vec<(WidgetId, EditorLocation)>,
-        edits: Option<Rope>,
-    },
-    InitBufferContentLine {
-        path: PathBuf,
-        content: Rope,
-        locations: Vec<(WidgetId, EditorLocation<Line>)>,
-        edits: Option<Rope>,
-    },
-    InitBufferContentLineCol {
-        path: PathBuf,
-        content: Rope,
-        locations: Vec<(WidgetId, EditorLocation<LineCol>)>,
-        edits: Option<Rope>,
-    },
-    /// Init buffer content but using lsp positions instead
-    InitBufferContentLsp {
-        path: PathBuf,
-        content: Rope,
-        locations: Vec<(WidgetId, EditorLocation<Position>)>,
-        edits: Option<Rope>,
-    },
+    /// UTF8 offsets into the file
+    InitBufferContent(InitBufferContent<usize>),
+    /// Start of line position
+    InitBufferContentLine(InitBufferContent<Line>),
+    /// Line and UTF8 Column Positions
+    InitBufferContentLineCol(InitBufferContent<LineCol>),
+    /// UTF16 LSP positions
+    InitBufferContentLsp(InitBufferContent<Position>),
     OpenFileChanged {
         path: PathBuf,
         content: Rope,
@@ -472,8 +480,10 @@ pub enum LapceUICommand {
         editor_view_id: WidgetId,
         location: EditorLocation,
     },
+    ShowAbout,
     ShowAlert(AlertContentData),
     ShowMenu(Point, Arc<Vec<MenuKind>>),
+    ShowWindow,
     UpdateSearchInput(String),
     UpdateSearch(String),
     GlobalSearchResult(String, Arc<HashMap<PathBuf, Vec<Match>>>),
@@ -482,11 +492,17 @@ pub enum LapceUICommand {
     PreviewTheme(String),
     SetTheme(String),
     UpdateKeymap(KeyMap, Vec<KeyPress>),
+    OpenURI(String),
+    OpenPaths {
+        window_tab_id: Option<(WindowId, WidgetId)>,
+        folders: Vec<PathBuf>,
+        files: Vec<PathBuf>,
+    },
     OpenFile(PathBuf),
     OpenFileDiff(PathBuf, String),
     CancelCompletion(usize),
     ResolveCompletion(BufferId, u64, usize, Box<CompletionItem>),
-    UpdateCompletion(usize, String, CompletionResponse),
+    UpdateCompletion(usize, String, CompletionResponse, PluginId),
     UpdateHover(usize, Arc<Vec<RichText>>),
     UpdateInlayHints {
         path: PathBuf,
@@ -499,6 +515,7 @@ pub enum LapceUICommand {
     ShowCodeActions(Option<Point>),
     Hide,
     ResignFocus,
+    UpdateLatestRelease(ReleaseInfo),
     Focus,
     ChildrenChanged,
     EnsureEditorTabActiveVisible,
@@ -520,15 +537,14 @@ pub enum LapceUICommand {
     UpdatePickerPwd(PathBuf),
     UpdatePickerItems(PathBuf, HashMap<PathBuf, FileNodeItem>),
     UpdateExplorerItems(PathBuf, HashMap<PathBuf, FileNodeItem>, bool),
-    UpdateInstalledPlugins(HashMap<String, PluginDescription>),
-    UpdatePluginDescriptions(Vec<PluginDescription>),
-    UpdateInstalledPluginDescriptions(PluginLoadingStatus),
-    UpdateUninstalledPluginDescriptions(PluginLoadingStatus),
-    UpdatePluginInstallationChange(HashMap<String, PluginDescription>),
-    UpdateDisabledPlugins(HashMap<String, PluginDescription>),
-    DisablePlugin(PluginDescription),
-    EnablePlugin(PluginDescription),
-    RemovePlugin(PluginDescription),
+    LoadPlugins(Vec<VoltInfo>),
+    LoadPluginsFailed,
+    VoltInstalled(VoltMetadata),
+    VoltRemoved(VoltInfo),
+    EnableVolt(VoltInfo),
+    DisableVolt(VoltInfo),
+    EnableVoltWorkspace(VoltInfo),
+    DisableVoltWorkspace(VoltInfo),
     RequestLayout,
     RequestPaint,
     ResetFade,
@@ -537,12 +553,14 @@ pub enum LapceUICommand {
     CloseTabId(WidgetId),
     FocusTabId(WidgetId),
     SwapTab(usize),
-    NewTab,
+    TabToWindow(WindowId, WidgetId),
+    NewTab(Option<LapceWorkspace>),
     NextTab,
     PreviousTab,
     NextEditorTab,
     PreviousEditorTab,
     FilterItems,
+    RestartToUpdate(PathBuf, ReleaseInfo),
     NewWindow(WindowId),
     ReloadWindow,
     CloseBuffers(Vec<BufferId>),
@@ -665,5 +683,57 @@ pub enum LapceUICommand {
         /// Whether it should name/rename the file with the input data
         apply_naming: bool,
     },
+    FileExplorerRefresh,
     SetLanguage(String),
+}
+
+/// This can't be an `FnOnce` because we only ever get a reference to
+/// [`InitBufferContent`]  
+/// However, in reality, it should only ever be called once.  
+/// This could be more powerful if it was given `&mut LapceTabData` but that would
+/// require moving the callers of it into `LapceTabData`.  
+///
+/// Parameters:  
+/// `(ctx: &mut EventCtx, data: &mut LapceMainSplitData)`
+pub type InitBufferContentCb =
+    Box<dyn Fn(&mut EventCtx, &mut LapceMainSplitData) + Send>;
+
+pub struct InitBufferContent<P: EditorPosition> {
+    pub path: PathBuf,
+    pub content: Rope,
+    pub locations: Vec<(WidgetId, EditorLocation<P>)>,
+    pub edits: Option<Rope>,
+    pub cb: Option<InitBufferContentCb>,
+}
+impl<P: EditorPosition + Clone + Send + 'static> InitBufferContent<P> {
+    pub fn execute(&self, ctx: &mut EventCtx, data: &mut LapceTabData) {
+        let doc = data.main_split.open_docs.get_mut(&self.path).unwrap();
+        let doc = Arc::make_mut(doc);
+        doc.init_content(self.content.to_owned());
+
+        if let Some(rope) = &self.edits {
+            doc.reload(rope.clone(), false);
+        }
+        if let BufferContent::File(path) = doc.content() {
+            if let Some(d) = data.main_split.diagnostics.get(path) {
+                doc.set_diagnostics(d);
+            }
+        }
+
+        for (view_id, location) in &self.locations {
+            data.main_split.go_to_location(
+                ctx,
+                Some(*view_id),
+                location.clone(),
+                &data.config,
+            );
+        }
+
+        // We've loaded the buffer and added it to the view, so inform the caller about it
+        if let Some(cb) = &self.cb {
+            (cb)(ctx, &mut data.main_split);
+        }
+
+        ctx.set_handled();
+    }
 }

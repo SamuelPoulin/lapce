@@ -1,3 +1,4 @@
+pub mod about;
 pub mod alert;
 pub mod command;
 pub mod completion;
@@ -27,3 +28,4 @@ pub mod signature;
 pub mod source_control;
 pub mod split;
 pub mod terminal;
+pub mod update;
